@@ -103,11 +103,7 @@ static ssize_t fs2_read_file(struct file *filp, char *buf,
 	list_for_each_entry(t, &(file_content->conts->list), list) {
 		if(token_index-- == 0)
 		{
-#if 0
 			size_to_copy = (t->text_len < count)?t->text_len:count;
-#endif
-			// TODO Wouldn't it cause a buffer overflow in some cases?
-			size_to_copy = t->text_len;
 			if(copy_to_user(buf, t->text, size_to_copy))
 			{
 				return -EFAULT;
@@ -200,12 +196,16 @@ static int fs2_create (struct inode *dir, struct dentry * dentry,
 	inode = new_inode(dir->i_sb);
 
 	inode->i_mode = mode | S_IFREG;
+	inode->i_uid = current->cred->fsuid;
+	inode->i_gid = current->cred->fsgid;
 	inode->i_blocks = 0;
 	inode->i_atime = inode->i_mtime = inode->i_ctime = CURRENT_TIME;
 	inode->i_ino = ++inode_number;
 
 	inode->i_op = &fs2_inode_ops;
 	inode->i_fop = &fs2_file_ops;
+
+	inode->i_private = NULL;
 
 	file->inode = inode;
 	file->conts = kmalloc(sizeof(struct token), GFP_KERNEL);
@@ -216,18 +216,54 @@ static int fs2_create (struct inode *dir, struct dentry * dentry,
 	INIT_LIST_HEAD(&file->conts->list);
 
 	INIT_LIST_HEAD(&file->list);
-	list_add_tail(&contents_list, &file->list);
+	list_add_tail(&contents_list, &(file->list));
 	d_instantiate(dentry, inode);
 	dget(dentry);
 
 	return 0;
 }
 
-static const struct inode_operations fs2_dir_inode_operations = {
-    .create     = fs2_create,
-	.lookup		= simple_lookup,
-};
+static struct inode_operations fs2_dir_inode_operations;
 
+static int fs2_mkdir(struct inode * dir, struct dentry *dentry,
+						int mode)
+{
+	struct inode *inode;
+
+	inode = new_inode(dir->i_sb);
+
+	if(!inode) {
+		return -ENOMEM;
+	}
+
+	inode->i_mode = mode | S_IFDIR;
+	inode->i_uid = current->cred->fsuid;
+	inode->i_gid = current->cred->fsgid;
+	inode->i_blocks = 0;
+	inode->i_atime = inode->i_mtime = inode->i_ctime = CURRENT_TIME;
+	inode->i_ino = ++inode_number;
+
+	inode->i_op = &fs2_dir_inode_operations;
+	inode->i_fop = &simple_dir_operations;
+
+	inode->i_private = NULL;
+	inc_nlink(inode);
+
+	if (dir->i_mode & S_ISGID) {
+		inode->i_gid = dir->i_gid;
+		if (S_ISDIR(mode))
+			inode->i_mode |= S_ISGID;
+	}
+
+	d_instantiate(dentry, inode);
+	dget(dentry);
+	dir->i_mtime = dir->i_ctime = CURRENT_TIME;
+	inode->i_ino = ++inode_number;
+	inc_nlink(dir);
+
+	return 0;
+
+}
 
 static int fs2_fill_super (struct super_block *sb, void *data, int silent)
 {
@@ -286,6 +322,10 @@ static struct file_system_type fs2_type = {
 static int __init fs2_init(void)
 {
 	INIT_LIST_HEAD(&contents_list);
+	fs2_dir_inode_operations.create = fs2_create;
+	fs2_dir_inode_operations.lookup = simple_lookup;
+	fs2_dir_inode_operations.mkdir	= fs2_mkdir;
+
 	return register_filesystem(&fs2_type);
 }
 
