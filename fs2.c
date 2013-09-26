@@ -26,8 +26,6 @@
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Fernando J. V. da Silva");
 
-
-static LIST_HEAD(contents_list);
 static int inode_number = 0;
 
 struct token {
@@ -43,40 +41,12 @@ struct file_contents {
 	struct token *conts;
 };
 
-static struct file_contents *fs2_find_file(struct inode *inode)
-{
-	struct file_contents *f;
-	list_for_each_entry(f, &contents_list, list) {
-		if (f->inode == inode)
-			return f;
-	}
-	return NULL;
-}
 
-static struct file_contents *fs2_get_file_content(struct inode *inode, struct file *filp)
-{
-	struct file_contents *result = NULL;
-
-	if(!filp->private_data)
-	{
-		result = fs2_find_file(inode);
-		if(result)
-		{
-			filp->private_data = result;
-		}
-	} else
-	{
-		result = filp->private_data;
-	}
-
-	return result;
-}
 
 static int fs2_open(struct inode *inode, struct file *filp)
 {
-	struct file_contents *file_content;
-
-	file_content = fs2_get_file_content(inode, filp);
+	if(inode->i_private)
+		filp->private_data = inode->i_private;
 
 	return 0;
 }
@@ -93,7 +63,8 @@ static ssize_t fs2_read_file(struct file *filp, char *buf,
 		return 0;
 	}
 
-	file_content = fs2_get_file_content(filp->f_path.dentry->d_inode, filp);
+	file_content = (struct file_contents *) filp->private_data;
+
 	if(!file_content)
 		return -EFAULT;
 
@@ -132,7 +103,7 @@ static ssize_t fs2_write_file(struct file *filp, const char *buf,
 	size_t last_word_len;
 	struct inode *inode = filp->f_path.dentry->d_inode;
 
-	file_content = fs2_get_file_content(filp->f_path.dentry->d_inode, filp);
+	file_content = (struct file_contents *) filp->private_data;
 
 	list_for_each_entry(t, &(file_content->conts->list), list) {
 		if(token_index-- == 0)
@@ -205,18 +176,17 @@ static int fs2_create (struct inode *dir, struct dentry * dentry,
 	inode->i_op = &fs2_inode_ops;
 	inode->i_fop = &fs2_file_ops;
 
-	inode->i_private = NULL;
-
 	file->inode = inode;
 	file->conts = kmalloc(sizeof(struct token), GFP_KERNEL);
 	file->curr_position = 0;
 	if (!file->conts)
 		return -EAGAIN;
 
+	inode->i_private = file;
+
 	INIT_LIST_HEAD(&file->conts->list);
 
-	INIT_LIST_HEAD(&file->list);
-	list_add_tail(&contents_list, &(file->list));
+
 	d_instantiate(dentry, inode);
 	dget(dentry);
 
@@ -321,7 +291,6 @@ static struct file_system_type fs2_type = {
 
 static int __init fs2_init(void)
 {
-	INIT_LIST_HEAD(&contents_list);
 	fs2_dir_inode_operations.create = fs2_create;
 	fs2_dir_inode_operations.lookup = simple_lookup;
 	fs2_dir_inode_operations.mkdir	= fs2_mkdir;
