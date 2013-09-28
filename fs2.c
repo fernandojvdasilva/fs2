@@ -156,6 +156,8 @@ static const struct inode_operations fs2_inode_ops = {
 	.getattr        = simple_getattr,
 };
 
+static struct inode_operations fs2_dir_inode_operations;
+
 static int fs2_create (struct inode *dir, struct dentry * dentry,
 			    int mode, struct nameidata *nd)
 {
@@ -173,8 +175,16 @@ static int fs2_create (struct inode *dir, struct dentry * dentry,
 	inode->i_atime = inode->i_mtime = inode->i_ctime = CURRENT_TIME;
 	inode->i_ino = ++inode_number;
 
-	inode->i_op = &fs2_inode_ops;
-	inode->i_fop = &fs2_file_ops;
+	switch(mode & S_IFMT) {
+	case S_IFREG:
+		inode->i_op = &fs2_inode_ops;
+		inode->i_fop = &fs2_file_ops;
+		break;
+	case S_IFDIR:
+		inode->i_op = &fs2_dir_inode_operations;
+		inode->i_fop = &simple_dir_operations;
+		break;
+	}
 
 	file->inode = inode;
 	file->conts = kmalloc(sizeof(struct token), GFP_KERNEL);
@@ -192,8 +202,6 @@ static int fs2_create (struct inode *dir, struct dentry * dentry,
 
 	return 0;
 }
-
-static struct inode_operations fs2_dir_inode_operations;
 
 static int fs2_mkdir(struct inode * dir, struct dentry *dentry,
 						int mode)
@@ -235,6 +243,12 @@ static int fs2_mkdir(struct inode * dir, struct dentry *dentry,
 
 }
 
+const struct super_operations fs2_ops = {
+    .statfs		= simple_statfs,
+    .drop_inode	= generic_delete_inode,
+};
+
+
 static int fs2_fill_super (struct super_block *sb, void *data, int silent)
 {
 	struct inode * inode;
@@ -245,7 +259,7 @@ static int fs2_fill_super (struct super_block *sb, void *data, int silent)
 	sb->s_blocksize = 1024;
 	sb->s_blocksize_bits = 10;
 
-    sb->s_op = (struct super_operations *) &fs2_file_ops;
+    sb->s_op = (struct super_operations *) &fs2_ops;
     sb->s_time_gran = 1;
 
     inode = new_inode(sb);
